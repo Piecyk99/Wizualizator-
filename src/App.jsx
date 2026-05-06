@@ -1,36 +1,41 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Canvas, useThree } from '@react-three/fiber';
+import { OrbitControls, Environment, ContactShadows, Html } from '@react-three/drei';
+import * as THREE from 'three';
 import './App.css';
 
-const CANVAS_W = 600;
-const CANVAS_H = 800;
-
+// 1 unit = 1 meter. Plan based on the user's floor plan (top-down meters).
+// X = right, Z = forward (so Y is up). Each room: x,z = top-left in meters; w = width (X), d = depth (Z).
 const ROOMS = [
-  { id: 'SALON',      name: 'Salon',      area: 21.79, icon: '🛋️', x: 70,  y: 80,  w: 160, h: 200 },
-  { id: 'SYPIALNIA',  name: 'Sypialnia',  area: 9.04,  icon: '🛏️', x: 70,  y: 290, w: 160, h: 120 },
-  { id: 'KUCHNIA',    name: 'Kuchnia',    area: 4.86,  icon: '🍳', x: 380, y: 80,  w: 150, h: 140 },
-  { id: 'POKOJ',      name: 'Pokój',      area: 8.10,  icon: '🪑', x: 240, y: 190, w: 130, h: 160 },
-  { id: 'POKOJ_2',    name: 'Pokój 2',    area: 21.79, icon: '🛋️', x: 70,  y: 420, w: 240, h: 300 },
-  { id: 'TV_ROOM',    name: 'TV Room',    area: 25.0,  icon: '📺', x: 310, y: 420, w: 220, h: 300 },
-  { id: 'PRZEDPOKOJ', name: 'Przedpokój', area: 3.77,  icon: '🚪', x: 380, y: 230, w: 150, h: 90  },
-  { id: 'LAZIENKA',   name: 'Łazienka',   area: 3.61,  icon: '🛁', x: 380, y: 330, w: 150, h: 80  },
+  { id: 'SALON',      name: 'Salon',      area: 21.79, icon: '🛋️', x: 0.7,  z: 0.8,  w: 1.6, d: 2.0 },
+  { id: 'SYPIALNIA',  name: 'Sypialnia',  area: 9.04,  icon: '🛏️', x: 0.7,  z: 2.9,  w: 1.6, d: 1.2 },
+  { id: 'KUCHNIA',    name: 'Kuchnia',    area: 4.86,  icon: '🍳', x: 3.8,  z: 0.8,  w: 1.5, d: 1.4 },
+  { id: 'POKOJ',      name: 'Pokój',      area: 8.10,  icon: '🪑', x: 2.4,  z: 1.9,  w: 1.3, d: 1.6 },
+  { id: 'POKOJ_2',    name: 'Pokój 2',    area: 21.79, icon: '🛋️', x: 0.7,  z: 4.2,  w: 2.4, d: 3.0 },
+  { id: 'TV_ROOM',    name: 'TV Room',    area: 25.0,  icon: '📺', x: 3.1,  z: 4.2,  w: 2.2, d: 3.0 },
+  { id: 'PRZEDPOKOJ', name: 'Przedpokój', area: 3.77,  icon: '🚪', x: 3.8,  z: 2.3,  w: 1.5, d: 0.9 },
+  { id: 'LAZIENKA',   name: 'Łazienka',   area: 3.61,  icon: '🛁', x: 3.8,  z: 3.3,  w: 1.5, d: 0.8 },
 ];
+
+const PLAN_W = 6;   // meters total
+const PLAN_D = 7.5; // meters total
+const WALL_H = 2.7; // meters
+const WALL_T = 0.08;
 
 const DEFAULT_WALL = '#f0f0f0';
 const DEFAULT_FURN = '#1a1a1a';
-const DEFAULT_FLOOR = '#d4a574';
-const ACCENT = '#4a90e2';
 
 const FLOORS = {
-  drewno:   { label: 'Drewno',   color: '#d4a574', pattern: 'wood' },
-  terakota: { label: 'Terakota', color: '#b96a4d', pattern: 'tile' },
-  beton:    { label: 'Beton',    color: '#8a8a8a', pattern: 'plain' },
+  drewno:   { label: 'Drewno',   color: '#d4a574' },
+  terakota: { label: 'Terakota', color: '#b96a4d' },
+  beton:    { label: 'Beton',    color: '#8a8a8a' },
 };
 
 const PRESETS = {
-  Nowoczesny: { floor: '#d4a574', walls: '#f0f0f0', furniture: '#1a1a1a' },
-  Klasyk:     { floor: '#c9a876', walls: '#ede6da', furniture: '#5a4a3a' },
-  Minimalizm: { floor: '#999999', walls: '#f5f5f5', furniture: '#888888' },
-  Luksus:     { floor: '#2a2a2a', walls: '#0a0a0a', furniture: '#1a1a1a' },
+  Nowoczesny: { floor: 'drewno',   walls: '#f0f0f0', furniture: '#1a1a1a' },
+  Klasyk:     { floor: 'drewno',   walls: '#ede6da', furniture: '#5a4a3a' },
+  Minimalizm: { floor: 'beton',    walls: '#f5f5f5', furniture: '#888888' },
+  Luksus:     { floor: 'beton',    walls: '#0a0a0a', furniture: '#1a1a1a' },
 };
 
 const DEFAULT_STATE = () => ({
@@ -41,84 +46,250 @@ const DEFAULT_STATE = () => ({
   light: 0.85,
   floor: 'drewno',
   preset: 'Nowoczesny',
+  showRoof: false,
+  view: 'orbit',
 });
 
-function applyLight(hex, light) {
-  const h = hex.replace('#', '');
-  const r = parseInt(h.substring(0, 2), 16);
-  const g = parseInt(h.substring(2, 4), 16);
-  const b = parseInt(h.substring(4, 6), 16);
-  const f = Math.max(0.3, Math.min(1, light));
-  const tr = Math.round(r * f);
-  const tg = Math.round(g * f);
-  const tb = Math.round(b * f);
-  return `rgb(${tr}, ${tg}, ${tb})`;
+// Convert plan coords (origin top-left) to world coords (centered).
+function toWorld(x, z) {
+  return [x - PLAN_W / 2, 0, z - PLAN_D / 2];
 }
 
-function FurnitureLayer({ room, color }) {
-  const { id, x, y, w, h } = room;
-  const pad = 10;
-  const items = [];
-  switch (id) {
+function Room({ room, colors, floorColor, light }) {
+  const [wx, , wz] = toWorld(room.x, room.z);
+  const cx = wx + room.w / 2;
+  const cz = wz + room.d / 2;
+
+  return (
+    <group>
+      {/* floor */}
+      <mesh position={[cx, 0, cz]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
+        <planeGeometry args={[room.w, room.d]} />
+        <meshStandardMaterial color={floorColor} roughness={0.85} metalness={0.05} />
+      </mesh>
+      {/* walls: 4 thin boxes around room perimeter */}
+      <mesh position={[cx, WALL_H / 2, wz]} castShadow receiveShadow>
+        <boxGeometry args={[room.w, WALL_H, WALL_T]} />
+        <meshStandardMaterial color={colors.walls} roughness={0.95} />
+      </mesh>
+      <mesh position={[cx, WALL_H / 2, wz + room.d]} castShadow receiveShadow>
+        <boxGeometry args={[room.w, WALL_H, WALL_T]} />
+        <meshStandardMaterial color={colors.walls} roughness={0.95} />
+      </mesh>
+      <mesh position={[wx, WALL_H / 2, cz]} castShadow receiveShadow>
+        <boxGeometry args={[WALL_T, WALL_H, room.d]} />
+        <meshStandardMaterial color={colors.walls} roughness={0.95} />
+      </mesh>
+      <mesh position={[wx + room.w, WALL_H / 2, cz]} castShadow receiveShadow>
+        <boxGeometry args={[WALL_T, WALL_H, room.d]} />
+        <meshStandardMaterial color={colors.walls} roughness={0.95} />
+      </mesh>
+
+      <Furniture room={room} center={[cx, cz]} color={colors.furniture} />
+
+      <Html position={[cx, 0.02, cz]} center distanceFactor={8} occlude={false}>
+        <div className="room-label">
+          <span>{room.icon} {room.name}</span>
+          <small>{room.area} m²</small>
+        </div>
+      </Html>
+    </group>
+  );
+}
+
+function Furniture({ room, center, color }) {
+  const [cx, cz] = center;
+  const mat = (
+    <meshStandardMaterial color={color} roughness={0.6} metalness={0.1} />
+  );
+  switch (room.id) {
     case 'SALON':
-      items.push(<rect key="sofa" x={x + pad} y={y + h - 50} width={w - 2 * pad} height={28} rx={4} fill={color} />);
-      items.push(<rect key="tv" x={x + w / 2 - 30} y={y + pad} width={60} height={10} fill={color} />);
-      items.push(<rect key="table" x={x + w / 2 - 25} y={y + h / 2 - 12} width={50} height={24} rx={4} fill={color} opacity={0.85} />);
-      break;
+      return (
+        <group>
+          <mesh position={[cx, 0.4, cz + room.d / 2 - 0.45]} castShadow>
+            <boxGeometry args={[room.w - 0.4, 0.8, 0.7]} />
+            {mat}
+          </mesh>
+          <mesh position={[cx, 0.25, cz]} castShadow>
+            <boxGeometry args={[0.9, 0.5, 0.5]} />
+            {mat}
+          </mesh>
+          <mesh position={[cx, 0.7, cz - room.d / 2 + 0.1]} castShadow>
+            <boxGeometry args={[1.0, 0.6, 0.05]} />
+            {mat}
+          </mesh>
+        </group>
+      );
     case 'SYPIALNIA':
-      items.push(<rect key="bed" x={x + pad} y={y + pad} width={w - 2 * pad} height={h - 2 * pad - 20} rx={6} fill={color} />);
-      items.push(<rect key="ns1" x={x + pad} y={y + h - 30} width={28} height={20} fill={color} opacity={0.7} />);
-      items.push(<rect key="ns2" x={x + w - pad - 28} y={y + h - 30} width={28} height={20} fill={color} opacity={0.7} />);
-      break;
+      return (
+        <group>
+          <mesh position={[cx, 0.3, cz]} castShadow>
+            <boxGeometry args={[room.w - 0.3, 0.6, room.d - 0.5]} />
+            {mat}
+          </mesh>
+        </group>
+      );
     case 'KUCHNIA':
-      items.push(<rect key="counter" x={x + pad} y={y + pad} width={w - 2 * pad} height={22} fill={color} />);
-      items.push(<rect key="island" x={x + pad} y={y + h - 40} width={w - 2 * pad} height={26} rx={3} fill={color} opacity={0.8} />);
-      break;
+      return (
+        <group>
+          <mesh position={[cx, 0.45, cz - room.d / 2 + 0.3]} castShadow>
+            <boxGeometry args={[room.w - 0.2, 0.9, 0.5]} />
+            {mat}
+          </mesh>
+          <mesh position={[cx, 0.45, cz + room.d / 2 - 0.4]} castShadow>
+            <boxGeometry args={[room.w - 0.6, 0.9, 0.6]} />
+            {mat}
+          </mesh>
+        </group>
+      );
     case 'POKOJ':
-      items.push(<rect key="desk" x={x + pad} y={y + pad} width={w - 2 * pad} height={28} fill={color} />);
-      items.push(<rect key="chair" x={x + w / 2 - 12} y={y + pad + 32} width={24} height={24} rx={4} fill={color} opacity={0.8} />);
-      break;
+      return (
+        <group>
+          <mesh position={[cx, 0.4, cz - room.d / 2 + 0.3]} castShadow>
+            <boxGeometry args={[room.w - 0.3, 0.8, 0.5]} />
+            {mat}
+          </mesh>
+          <mesh position={[cx, 0.25, cz]} castShadow>
+            <boxGeometry args={[0.5, 0.5, 0.5]} />
+            {mat}
+          </mesh>
+        </group>
+      );
     case 'POKOJ_2':
-      items.push(<rect key="bed" x={x + pad} y={y + pad} width={w - 2 * pad} height={70} rx={6} fill={color} />);
-      items.push(<rect key="ward" x={x + pad} y={y + h - 50} width={w - 2 * pad} height={36} fill={color} opacity={0.85} />);
-      break;
+      return (
+        <group>
+          <mesh position={[cx, 0.3, cz - room.d / 2 + 1.0]} castShadow>
+            <boxGeometry args={[room.w - 0.3, 0.6, 1.6]} />
+            {mat}
+          </mesh>
+          <mesh position={[cx, 1.1, cz + room.d / 2 - 0.3]} castShadow>
+            <boxGeometry args={[room.w - 0.4, 2.2, 0.55]} />
+            {mat}
+          </mesh>
+        </group>
+      );
     case 'TV_ROOM':
-      items.push(<rect key="sofa" x={x + pad} y={y + h - 60} width={w - 2 * pad} height={36} rx={6} fill={color} />);
-      items.push(<rect key="tv" x={x + w / 2 - 50} y={y + pad} width={100} height={12} fill={color} />);
-      items.push(<rect key="rug" x={x + pad + 20} y={y + h / 2 - 30} width={w - 2 * pad - 40} height={50} rx={4} fill={color} opacity={0.4} />);
-      break;
+      return (
+        <group>
+          <mesh position={[cx, 0.4, cz + room.d / 2 - 0.5]} castShadow>
+            <boxGeometry args={[room.w - 0.4, 0.8, 0.8]} />
+            {mat}
+          </mesh>
+          <mesh position={[cx, 1.1, cz - room.d / 2 + 0.1]} castShadow>
+            <boxGeometry args={[1.6, 0.9, 0.06]} />
+            {mat}
+          </mesh>
+          <mesh position={[cx, 0.05, cz]} castShadow>
+            <boxGeometry args={[room.w - 0.6, 0.05, room.d - 1.2]} />
+            <meshStandardMaterial color={color} roughness={1} metalness={0} opacity={0.6} transparent />
+          </mesh>
+        </group>
+      );
     case 'PRZEDPOKOJ':
-      items.push(<rect key="rack" x={x + pad} y={y + pad} width={w - 2 * pad} height={14} fill={color} />);
-      break;
+      return (
+        <mesh position={[cx, 1.0, cz - room.d / 2 + 0.15]} castShadow>
+          <boxGeometry args={[room.w - 0.4, 1.8, 0.25]} />
+          {mat}
+        </mesh>
+      );
     case 'LAZIENKA':
-      items.push(<rect key="tub" x={x + pad} y={y + pad} width={70} height={h - 2 * pad} rx={8} fill={color} />);
-      items.push(<rect key="sink" x={x + w - pad - 30} y={y + pad} width={30} height={24} fill={color} opacity={0.8} />);
-      break;
+      return (
+        <group>
+          <mesh position={[cx - room.w / 2 + 0.4, 0.3, cz]} castShadow>
+            <boxGeometry args={[0.7, 0.55, room.d - 0.2]} />
+            {mat}
+          </mesh>
+          <mesh position={[cx + room.w / 2 - 0.25, 0.5, cz - room.d / 2 + 0.2]} castShadow>
+            <boxGeometry args={[0.4, 0.15, 0.3]} />
+            {mat}
+          </mesh>
+        </group>
+      );
     default:
-      break;
+      return null;
   }
-  return <g>{items}</g>;
+}
+
+function Scene({ state, floorColor }) {
+  return (
+    <>
+      <ambientLight intensity={0.4 * state.light} />
+      <directionalLight
+        castShadow
+        position={[5, 8, 4]}
+        intensity={1.4 * state.light}
+        shadow-mapSize-width={1024}
+        shadow-mapSize-height={1024}
+        shadow-camera-left={-8}
+        shadow-camera-right={8}
+        shadow-camera-top={8}
+        shadow-camera-bottom={-8}
+      />
+      <hemisphereLight args={['#ffffff', '#222', 0.35 * state.light]} />
+
+      {/* ground / outside */}
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.001, 0]} receiveShadow>
+        <planeGeometry args={[40, 40]} />
+        <meshStandardMaterial color="#0d0d0d" roughness={1} />
+      </mesh>
+
+      {ROOMS.map((r) => (
+        <Room
+          key={r.id}
+          room={r}
+          colors={state.rooms[r.id]}
+          floorColor={floorColor}
+          light={state.light}
+        />
+      ))}
+
+      {state.showRoof && (
+        <mesh
+          position={[0, WALL_H + 0.04, 0]}
+          rotation={[-Math.PI / 2, 0, 0]}
+        >
+          <planeGeometry args={[PLAN_W + 0.5, PLAN_D + 0.5]} />
+          <meshStandardMaterial color="#1f1f1f" roughness={1} side={THREE.DoubleSide} />
+        </mesh>
+      )}
+
+      <ContactShadows position={[0, 0.001, 0]} opacity={0.45} scale={20} blur={2.4} far={4} />
+      <Environment preset="apartment" />
+    </>
+  );
+}
+
+function CameraRig({ view }) {
+  const { camera } = useThree();
+  useEffect(() => {
+    if (view === 'top') {
+      camera.position.set(0, 12, 0.001);
+      camera.lookAt(0, 0, 0);
+    } else if (view === 'orbit') {
+      camera.position.set(8, 7, 8);
+      camera.lookAt(0, 0, 0);
+    } else if (view === 'fp') {
+      camera.position.set(0, 1.6, 2);
+      camera.lookAt(0, 1.6, 0);
+    }
+  }, [view, camera]);
+  return null;
 }
 
 export default function App() {
   const [state, setState] = useState(DEFAULT_STATE);
   const [history, setHistory] = useState([]);
   const [future, setFuture] = useState([]);
-  const [bgImage, setBgImage] = useState(null);
-  const [bgOpacity, setBgOpacity] = useState(0.15);
   const [copied, setCopied] = useState(false);
-  const svgRef = useRef(null);
+  const glRef = useRef(null);
 
-  // Load shared config from URL hash on mount
   useEffect(() => {
     if (window.location.hash.startsWith('#cfg=')) {
       try {
         const raw = decodeURIComponent(window.location.hash.slice(5));
         const decoded = JSON.parse(atob(raw));
-        if (decoded && decoded.rooms) setState(decoded);
-      } catch (e) {
-        // ignore
-      }
+        if (decoded && decoded.rooms) setState({ ...DEFAULT_STATE(), ...decoded });
+      } catch (e) { /* ignore */ }
     }
   }, []);
 
@@ -130,8 +301,7 @@ export default function App() {
   const update = (mutator) => {
     setState((prev) => {
       pushHistory(prev);
-      const next = typeof mutator === 'function' ? mutator(prev) : mutator;
-      return next;
+      return typeof mutator === 'function' ? mutator(prev) : mutator;
     });
   };
 
@@ -155,17 +325,16 @@ export default function App() {
     });
   };
 
-  const setRoomColor = (roomId, key, color) => {
+  const setRoomColor = (roomId, key, color) =>
     update((prev) => ({
       ...prev,
       rooms: { ...prev.rooms, [roomId]: { ...prev.rooms[roomId], [key]: color } },
     }));
-  };
 
-  const setLight = (v) =>
-    update((prev) => ({ ...prev, light: parseFloat(v) }));
-
+  const setLight = (v) => update((prev) => ({ ...prev, light: parseFloat(v) }));
   const setFloor = (v) => update((prev) => ({ ...prev, floor: v }));
+  const setView = (v) => update((prev) => ({ ...prev, view: v }));
+  const toggleRoof = () => update((prev) => ({ ...prev, showRoof: !prev.showRoof }));
 
   const applyPreset = (name) => {
     const p = PRESETS[name];
@@ -173,18 +342,17 @@ export default function App() {
     update((prev) => ({
       ...prev,
       preset: name,
+      floor: p.floor,
       rooms: ROOMS.reduce((acc, r) => {
         acc[r.id] = { walls: p.walls, furniture: p.furniture };
         return acc;
       }, {}),
-      floor: name === 'Nowoczesny' ? 'drewno' : name === 'Klasyk' ? 'drewno' : name === 'Minimalizm' ? 'beton' : 'beton',
     }));
   };
 
   const reset = () => {
     pushHistory(state);
     setState(DEFAULT_STATE());
-    setBgImage(null);
   };
 
   const copyJson = async () => {
@@ -192,8 +360,8 @@ export default function App() {
       await navigator.clipboard.writeText(JSON.stringify(state, null, 2));
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
-    } catch (e) {
-      alert('Nie można skopiować do schowka');
+    } catch {
+      alert('Nie można skopiować');
     }
   };
 
@@ -205,173 +373,70 @@ export default function App() {
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     } catch {
-      prompt('Skopiuj ten URL:', url);
+      prompt('Skopiuj URL:', url);
     }
   };
 
-  const downloadPng = async () => {
-    const svg = svgRef.current;
-    if (!svg) return;
-    const xml = new XMLSerializer().serializeToString(svg);
-    const svg64 = btoa(unescape(encodeURIComponent(xml)));
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
-    img.onload = () => {
-      const canvas = document.createElement('canvas');
-      canvas.width = CANVAS_W * 2;
-      canvas.height = CANVAS_H * 2;
-      const ctx = canvas.getContext('2d');
-      ctx.fillStyle = '#1a1a1a';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-      const a = document.createElement('a');
-      a.href = canvas.toDataURL('image/png');
-      a.download = `mieszkanie-${Date.now()}.png`;
-      a.click();
-    };
-    img.src = `data:image/svg+xml;base64,${svg64}`;
+  const downloadPng = () => {
+    const gl = glRef.current;
+    if (!gl) return;
+    // Force a render to capture latest frame
+    gl.render(gl.scene, gl.camera);
+    const url = gl.domElement.toDataURL('image/png');
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `mieszkanie-3d-${Date.now()}.png`;
+    a.click();
   };
 
-  const handleUpload = (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => setBgImage(reader.result);
-    reader.readAsDataURL(file);
-  };
-
-  const floorColor = useMemo(() => FLOORS[state.floor]?.color || DEFAULT_FLOOR, [state.floor]);
-  const floorPattern = FLOORS[state.floor]?.pattern || 'wood';
+  const floorColor = useMemo(
+    () => FLOORS[state.floor]?.color || '#d4a574',
+    [state.floor]
+  );
 
   return (
     <div className="app">
       <header className="topbar">
         <div className="brand">
           <span className="dot" />
-          <strong>Wizualizator Mieszkania</strong>
+          <strong>Wizualizator Mieszkania 3D</strong>
           <span className="muted">· interaktywny edytor</span>
         </div>
         <div className="topbar-actions">
-          <button onClick={undo} disabled={history.length === 0} title="Cofnij (Ctrl+Z)">
-            ↶ Cofnij
-          </button>
-          <button onClick={redo} disabled={future.length === 0} title="Ponów">
-            ↷ Ponów
-          </button>
+          <button onClick={() => setView('orbit')} className={state.view === 'orbit' ? 'active' : ''}>🔄 Orbita</button>
+          <button onClick={() => setView('top')} className={state.view === 'top' ? 'active' : ''}>⬇ Z góry</button>
+          <button onClick={() => setView('fp')} className={state.view === 'fp' ? 'active' : ''}>👁 1. osoba</button>
+          <button onClick={toggleRoof}>{state.showRoof ? '🏠 Bez sufitu' : '🏠 Sufit'}</button>
+          <button onClick={undo} disabled={history.length === 0}>↶</button>
+          <button onClick={redo} disabled={future.length === 0}>↷</button>
         </div>
       </header>
 
       <div className="layout">
         <section className="left">
           <div className="canvas-wrap">
-            <svg
-              ref={svgRef}
-              viewBox={`0 0 ${CANVAS_W} ${CANVAS_H}`}
-              width="100%"
-              height="100%"
-              preserveAspectRatio="xMidYMid meet"
-              xmlns="http://www.w3.org/2000/svg"
+            <Canvas
+              shadows
+              camera={{ position: [8, 7, 8], fov: 45 }}
+              gl={{ preserveDrawingBuffer: true, antialias: true }}
+              onCreated={({ gl, scene, camera }) => {
+                glRef.current = gl;
+                glRef.current.scene = scene;
+                glRef.current.camera = camera;
+                gl.setClearColor('#0e0e0e');
+              }}
             >
-              <defs>
-                <pattern id="wood" patternUnits="userSpaceOnUse" width="40" height="80">
-                  <rect width="40" height="80" fill={applyLight(floorColor, state.light)} />
-                  <line x1="0" y1="0" x2="40" y2="0" stroke="rgba(0,0,0,0.18)" strokeWidth="1" />
-                  <line x1="0" y1="40" x2="40" y2="40" stroke="rgba(0,0,0,0.12)" strokeWidth="1" />
-                  <line x1="20" y1="0" x2="20" y2="40" stroke="rgba(0,0,0,0.08)" strokeWidth="1" />
-                  <line x1="0" y1="40" x2="0" y2="80" stroke="rgba(0,0,0,0.08)" strokeWidth="1" />
-                </pattern>
-                <pattern id="tile" patternUnits="userSpaceOnUse" width="30" height="30">
-                  <rect width="30" height="30" fill={applyLight(floorColor, state.light)} />
-                  <rect width="30" height="30" fill="none" stroke="rgba(0,0,0,0.18)" strokeWidth="1" />
-                </pattern>
-                <pattern id="plain" patternUnits="userSpaceOnUse" width="10" height="10">
-                  <rect width="10" height="10" fill={applyLight(floorColor, state.light)} />
-                </pattern>
-                <filter id="soft">
-                  <feGaussianBlur stdDeviation="0.4" />
-                </filter>
-              </defs>
-
-              <rect x="0" y="0" width={CANVAS_W} height={CANVAS_H} fill="#111" />
-
-              {bgImage && (
-                <image
-                  href={bgImage}
-                  x="0"
-                  y="0"
-                  width={CANVAS_W}
-                  height={CANVAS_H}
-                  opacity={bgOpacity}
-                  preserveAspectRatio="xMidYMid slice"
-                />
-              )}
-
-              {ROOMS.map((room) => {
-                const colors = state.rooms[room.id];
-                const wallColor = applyLight(colors.walls, state.light);
-                return (
-                  <g key={room.id}>
-                    <rect
-                      x={room.x}
-                      y={room.y}
-                      width={room.w}
-                      height={room.h}
-                      fill={`url(#${floorPattern})`}
-                      stroke="#000"
-                      strokeWidth="2"
-                    />
-                    <rect
-                      x={room.x}
-                      y={room.y}
-                      width={room.w}
-                      height={room.h}
-                      fill={wallColor}
-                      opacity="0.35"
-                    />
-                    <rect
-                      x={room.x}
-                      y={room.y}
-                      width={room.w}
-                      height={room.h}
-                      fill="none"
-                      stroke={wallColor}
-                      strokeWidth="6"
-                      opacity="0.9"
-                    />
-                    <FurnitureLayer
-                      room={room}
-                      color={applyLight(colors.furniture, state.light)}
-                    />
-                    <text
-                      x={room.x + room.w / 2}
-                      y={room.y + room.h / 2 - 4}
-                      textAnchor="middle"
-                      fontSize="14"
-                      fontWeight="700"
-                      fill="#fff"
-                      stroke="#000"
-                      strokeWidth="3"
-                      paintOrder="stroke"
-                    >
-                      {room.icon} {room.name}
-                    </text>
-                    <text
-                      x={room.x + room.w / 2}
-                      y={room.y + room.h / 2 + 12}
-                      textAnchor="middle"
-                      fontSize="11"
-                      fill="#fff"
-                      stroke="#000"
-                      strokeWidth="2.5"
-                      paintOrder="stroke"
-                      opacity="0.95"
-                    >
-                      {room.area} m²
-                    </text>
-                  </g>
-                );
-              })}
-            </svg>
+              <CameraRig view={state.view} />
+              <Scene state={state} floorColor={floorColor} />
+              <OrbitControls
+                makeDefault
+                enableDamping
+                target={[0, 0.8, 0]}
+                maxPolarAngle={Math.PI / 2 - 0.05}
+                minDistance={2}
+                maxDistance={25}
+              />
+            </Canvas>
           </div>
         </section>
 
@@ -380,28 +445,14 @@ export default function App() {
             <h3>Styl</h3>
             <label className="row">
               <span>Preset</span>
-              <select
-                value={state.preset}
-                onChange={(e) => applyPreset(e.target.value)}
-              >
-                {Object.keys(PRESETS).map((k) => (
-                  <option key={k} value={k}>
-                    {k}
-                  </option>
-                ))}
+              <select value={state.preset} onChange={(e) => applyPreset(e.target.value)}>
+                {Object.keys(PRESETS).map((k) => <option key={k} value={k}>{k}</option>)}
               </select>
             </label>
             <label className="row">
               <span>Podłoga</span>
-              <select
-                value={state.floor}
-                onChange={(e) => setFloor(e.target.value)}
-              >
-                {Object.entries(FLOORS).map(([k, v]) => (
-                  <option key={k} value={k}>
-                    {v.label}
-                  </option>
-                ))}
+              <select value={state.floor} onChange={(e) => setFloor(e.target.value)}>
+                {Object.entries(FLOORS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
               </select>
             </label>
             <label className="row">
@@ -415,9 +466,7 @@ export default function App() {
                   value={state.light}
                   onChange={(e) => setLight(e.target.value)}
                 />
-                <span className="muted small">
-                  {Math.round(state.light * 100)}%
-                </span>
+                <span className="muted small">{Math.round(state.light * 100)}%</span>
               </div>
             </label>
           </div>
@@ -437,31 +486,15 @@ export default function App() {
                     <label>
                       <span>Ściany</span>
                       <div className="color-pair">
-                        <input
-                          type="color"
-                          value={c.walls}
-                          onChange={(e) => setRoomColor(room.id, 'walls', e.target.value)}
-                        />
-                        <input
-                          type="text"
-                          value={c.walls}
-                          onChange={(e) => setRoomColor(room.id, 'walls', e.target.value)}
-                        />
+                        <input type="color" value={c.walls} onChange={(e) => setRoomColor(room.id, 'walls', e.target.value)} />
+                        <input type="text" value={c.walls} onChange={(e) => setRoomColor(room.id, 'walls', e.target.value)} />
                       </div>
                     </label>
                     <label>
                       <span>Meble</span>
                       <div className="color-pair">
-                        <input
-                          type="color"
-                          value={c.furniture}
-                          onChange={(e) => setRoomColor(room.id, 'furniture', e.target.value)}
-                        />
-                        <input
-                          type="text"
-                          value={c.furniture}
-                          onChange={(e) => setRoomColor(room.id, 'furniture', e.target.value)}
-                        />
+                        <input type="color" value={c.furniture} onChange={(e) => setRoomColor(room.id, 'furniture', e.target.value)} />
+                        <input type="text" value={c.furniture} onChange={(e) => setRoomColor(room.id, 'furniture', e.target.value)} />
                       </div>
                     </label>
                   </div>
@@ -470,33 +503,18 @@ export default function App() {
             })}
           </div>
 
-          <div className="section">
-            <h3>Plan w tle (opcjonalnie)</h3>
-            <input type="file" accept="image/*" onChange={handleUpload} />
-            {bgImage && (
-              <label className="row">
-                <span>Krycie</span>
-                <input
-                  type="range"
-                  min="0"
-                  max="1"
-                  step="0.05"
-                  value={bgOpacity}
-                  onChange={(e) => setBgOpacity(parseFloat(e.target.value))}
-                />
-              </label>
-            )}
-          </div>
-
           <div className="section actions">
             <button onClick={reset}>Reset</button>
-            <button className="primary" onClick={downloadPng}>
-              ⬇ Pobierz PNG
-            </button>
-            <button onClick={copyJson}>
-              {copied ? '✓ Skopiowano' : '⧉ Kopiuj JSON'}
-            </button>
+            <button className="primary" onClick={downloadPng}>⬇ Pobierz PNG</button>
+            <button onClick={copyJson}>{copied ? '✓ Skopiowano' : '⧉ Kopiuj JSON'}</button>
             <button onClick={shareUrl}>🔗 Link</button>
+          </div>
+
+          <div className="section hint">
+            <h3>Sterowanie</h3>
+            <p className="muted small">
+              <strong>Lewy myszka</strong> — obrót · <strong>Prawy</strong> — przesuń · <strong>Scroll</strong> — zoom
+            </p>
           </div>
         </aside>
       </div>
